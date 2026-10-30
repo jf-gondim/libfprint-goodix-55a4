@@ -11,6 +11,9 @@ Goodix 27c6:55a4 fingerprint driver for Linux
     source/install
     source/usage
     source/troubleshooting
+    source/security
+    source/sensor-key
+    source/status
     PROTOCOL
     TECHNICAL
 

@@ -177,7 +177,7 @@ written and verified``.
 
 The key is a fixed public blob, the same for every unit, and it is written in the slot
 that the stock Windows driver does not use. It stays in the sensor after an uninstall.
-The dual-boot notes are in the repository README, section *The sensor key*.
+The dual-boot notes are in :doc:`sensor-key`.
 
 .. _install-revoke:
 
