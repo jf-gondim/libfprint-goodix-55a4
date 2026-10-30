@@ -87,6 +87,7 @@ outcome).
 Install permanently (no replace/downgrade of the distro libfprint):
 ```
 sudo bash scripts/install-system.sh      # → /opt/libfprint-goodix + systemd drop-in
+# sensor key, once, as your user: scripts/provision.sh (see README, "The sensor key")
 scripts/fp-notify.sh enroll              # 16 touches, desktop ping per touch
 scripts/fp-notify.sh verify 8
 ```

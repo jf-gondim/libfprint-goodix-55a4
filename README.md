@@ -107,7 +107,7 @@ cd goodix-27c6-55a4-fingerprint-linux
 ```
 
 `install.sh` builds in a temporary directory, installs, and **deletes the build
-tree**. It asks for your password once, for the install step itself. Nothing is
+tree**. It asks for your password for the install steps, and once more for permission to write the sensor key (see below). Nothing is
 left in your home directory afterwards, and you can delete the cloned repository
 too — it is not needed to run the driver, only to uninstall it.
 
@@ -130,6 +130,10 @@ about 300 MB under `work/` — so you can edit and rebuild:
 ```sh
 ./setup.sh                              # keeps ./work/
 sudo bash scripts/install-system.sh     # installs whatever is in ./work/
+# one-time sensor key, as your user (asks before writing):
+sudo bash scripts/udev-access.sh grant && sudo systemctl stop fprintd
+scripts/provision.sh
+sudo bash scripts/udev-access.sh revoke
 ```
 
 `scripts/led_gui.py` additionally needs Tk, which is not pulled in by the build
@@ -158,7 +162,7 @@ It does **not** replace or downgrade your distribution's libfprint. The patched
 build goes to `/opt/libfprint-goodix`, and a systemd drop-in points *only*
 `fprintd` at it. Everything else on the system keeps using the distro library.
 
-It also provisions the sensor key (see below), checks whether your fingerprint
+It then provisions the sensor key (see below), checks whether your fingerprint
 templates land on an encrypted filesystem, and reports whether SELinux is
 enforcing.
 
@@ -219,7 +223,17 @@ The driver speaks TLS-PSK with an all-zero key, which the sensor only accepts
 once the public "whitebox" blob has been written into it. That blob is not
 device-specific and is not extracted from anyone's hardware — it ships in
 goodix-fp-dump. Writing it is a one-time operation and the installer does it for
-you (`scripts/provision_psk.py`, idempotent).
+you (`scripts/provision_psk.py`, idempotent) — but only after you type `y`
+at a prompt; `GOODIX_ASSUME_YES=1` answers for scripted installs.
+
+That Python (and the PyPI packages it imports, all pinned by hash in
+[`requirements/`](requirements/)) runs as **your user, not root**. For the
+duration of the step a udev rule
+([`scripts/70-goodix55a4.rules`](scripts/70-goodix55a4.rules)) lets your login
+session open the sensor; `install.sh` removes it again afterwards. Leave it in
+place only if you want to run the research tools without `sudo`, because while
+it exists any program you run can read raw images from the sensor. It relies on
+`uaccess`, so it works for a local graphical login, not over SSH.
 
 On dual-boot, being precise about what is known, because this is the part you
 have to trust:
