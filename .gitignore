@@ -28,3 +28,6 @@ __pycache__/
 *.pgm
 *.raw
 otp.bin
+
+# Built documentation (make -C docs html)
+/docs/_build/
