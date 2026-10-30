@@ -15,12 +15,17 @@ Exit codes:
   0  the sensor already had the key, or it was written successfully
   1  the sensor is unreachable (busy, missing, no permission)
   2  the write was attempted and the sensor still does not report the key
+  3  the sensor needs the key and you declined (or no terminal to ask on)
+
+Nothing is written without a "y" typed on the terminal. Scripted installs can
+set GOODIX_ASSUME_YES=1 to answer for you.
 
 Note for dual-boot: this writes slot 0xbb010003 only. Windows keeps its own
 DPAPI-wrapped key material in slot 0xbb010002, which nothing here touches. It
 is expected to re-provision itself if it ever needs to, but that was seen once
 on one machine, not tested repeatedly — see the dual-boot note in README.
 """
+import os
 import sys
 
 try:
@@ -28,6 +33,25 @@ try:
 except ImportError:
     print("provision_psk: run from the goodix-fp-dump directory", file=sys.stderr)
     sys.exit(1)
+
+
+def confirmed():
+    if os.environ.get("GOODIX_ASSUME_YES") == "1":
+        return True
+    try:
+        # /dev/tty, not stdin: this may run inside a pipeline. Two handles, because
+        # "r+" needs a seekable file and a terminal is not one.
+        out, inp = open("/dev/tty", "w"), open("/dev/tty", "r")
+    except OSError:
+        print("  no terminal to ask on; set GOODIX_ASSUME_YES=1 to allow the write",
+              file=sys.stderr)
+        return False
+    with out, inp:
+        out.write("  This writes a public, non-device-specific key into slot 0xbb010003\n"
+                  "  of the sensor, once. Windows' own slot (0xbb010002) is not touched,\n"
+                  "  and uninstalling does not undo it. Write it now? [y/N] ")
+        out.flush()
+        return inp.readline().strip().lower() in ("y", "yes")
 
 
 def main():
@@ -49,7 +73,12 @@ def main():
         print("  key already present — nothing to do")
         return 0
 
-    print("  no key on the sensor, writing it (one-time step)...")
+    print("  no key on the sensor")
+    if not confirmed():
+        print("  not written; the driver will refuse to activate without it",
+              file=sys.stderr)
+        return 3
+    print("  writing it (one-time step)...")
     try:
         driver_55x4.write_psk(dev)
     except Exception as e:  # noqa: BLE001

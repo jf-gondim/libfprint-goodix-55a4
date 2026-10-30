@@ -8,7 +8,9 @@
 #   /etc/systemd/system/fprintd.service.d/10-*.conf   points fprintd at it
 #   one SELinux policy module (enforcing systems only)
 #
-# scripts/uninstall-system.sh removes all three.
+# scripts/uninstall-system.sh removes all three. The one-time sensor key is
+# written as YOU, not root, and only after you confirm; a udev rule that lets
+# your session reach the sensor exists just for that step and is removed again.
 #
 # Your distribution's own libfprint is neither replaced nor downgraded — only
 # fprintd is redirected, every other program keeps using the system library.
@@ -58,7 +60,13 @@ done
 # /var/tmp rather than /tmp: the build is ~200 MB and /tmp is often a tmpfs,
 # i.e. RAM. Overridable for anyone who wants it elsewhere.
 BUILD="$(mktemp -d -p "${GOODIX_BUILD_DIR:-/var/tmp}" goodix55a4.XXXXXXXX)"
+UDEV_GRANTED=0
 cleanup() {
+  # Never leave the sensor open to every program in your session.
+  if [ "$UDEV_GRANTED" = 1 ]; then
+    sudo bash "$REPO/scripts/udev-access.sh" revoke ||
+      echo "WARNING: remove /etc/udev/rules.d/70-goodix55a4.rules by hand." >&2
+  fi
   echo "== cleaning up the build tree =="
   rm -rf "$BUILD" 2>/dev/null
   # Verify rather than assume: the install step runs as root inside $BUILD, so a
@@ -71,7 +79,7 @@ cleanup() {
 trap cleanup EXIT
 echo "building in $BUILD (removed when this finishes)"
 
-echo "== 1/3 build the patched libfprint =="
+echo "== 1/4 build the patched libfprint =="
 git clone -q --branch 55b4-experimental "$FORK_URL" "$BUILD/libfprint"
 pin "$BUILD/libfprint" "$FORK_REV"
 git -C "$BUILD/libfprint" apply "$REPO/patches/55a4-driver.patch"
@@ -83,20 +91,42 @@ echo "   built"
 # needed exactly once, so it gets a throwaway venv holding only what the write
 # path imports — no OpenCV, no numpy, which is the difference between ~15 MB and
 # ~250 MB. The research tooling in ./setup.sh does pull those in.
-echo "== 2/3 prepare one-time key provisioning =="
+# Every package is pinned by hash (requirements/): this code runs against your
+# sensor, so it must be exactly what was reviewed. build.txt goes first and
+# --no-build-isolation keeps pip from fetching an unpinned setuptools to build
+# crcmod, which only ships as source.
+echo "== 2/4 prepare one-time key provisioning =="
 git clone -q "$DUMP_URL" "$BUILD/goodix-fp-dump"
 pin "$BUILD/goodix-fp-dump" "$DUMP_REV"
 python3 -m venv "$BUILD/goodix-fp-dump/.venv"
-"$BUILD/goodix-fp-dump/.venv/bin/pip" install -q pyusb crcmod python-periphery
+PIP="$BUILD/goodix-fp-dump/.venv/bin/pip"
+"$PIP" install -q --require-hashes --no-deps -r "$REPO/requirements/build.txt"
+"$PIP" install -q --require-hashes --no-deps --no-build-isolation \
+  -r "$REPO/requirements/provision.txt"
 # stub: protocol.py imports spidev unconditionally, for the SPI variants of this
 # sensor family. Ours is USB, so nothing ever calls into it — but the import has
 # to resolve or driver_55x4 will not load.
 printf 'class SpiDev:\n    pass\n' > "$BUILD/goodix-fp-dump/spidev.py"
-install -m0644 "$REPO/scripts/provision_psk.py" "$BUILD/goodix-fp-dump/"
 echo "   ready"
 
-echo "== 3/3 install (needs sudo) =="
-sudo env \
-  FP_SO_SRC="$BUILD/libfprint/build/libfprint" \
-  FP_PYDIR="$BUILD/goodix-fp-dump" \
+echo "== 3/4 install (needs sudo) =="
+sudo env FP_SO_SRC="$BUILD/libfprint/build/libfprint" \
   bash "$REPO/scripts/install-system.sh"
+
+echo "== 4/4 one-time sensor key (runs as you, asks before writing) =="
+UDEV_GRANTED=1
+sudo bash "$REPO/scripts/udev-access.sh" grant
+# fprintd would hold the sensor; a plain stop is polite enough for it to switch
+# its LED off.
+sudo systemctl stop fprintd.service 2>/dev/null || true
+rc=0
+"$REPO/scripts/provision.sh" "$BUILD/goodix-fp-dump" || rc=$?
+sudo bash "$REPO/scripts/udev-access.sh" revoke
+UDEV_GRANTED=0
+sudo systemctl restart fprintd.service 2>/dev/null || true
+case "$rc" in
+  0) ;;
+  3) echo "WARNING: key not written; the driver will not activate until it is." >&2
+     echo "         Re-run ./install.sh when you are ready to allow it." >&2 ;;
+  *) echo "WARNING: key provisioning failed (exit $rc); the driver may not activate." >&2 ;;
+esac

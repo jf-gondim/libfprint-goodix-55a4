@@ -8,13 +8,15 @@
 #   - the system libfprint (1.94.10) stays the default for every other app
 #   - PAM is wired by authselect's `with-fingerprint` feature (enable if absent)
 #
+# The sensor key is NOT written here: that needs PyPI code, which should not run
+# as root. See scripts/provision.sh.
+#
 # Reverse with: scripts/uninstall-system.sh
 set -e
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # Where the build lives. Defaults to the developer tree left by ./setup.sh;
-# ./install.sh overrides both to a temporary directory it deletes afterwards.
+# ./install.sh overrides it to a temporary directory it deletes afterwards.
 SO_SRC="${FP_SO_SRC:-$REPO/work/twd-libfprint/build/libfprint}"
-PYDIR="${FP_PYDIR:-$REPO/work/goodix-fp-dump}"
 DEST="/opt/libfprint-goodix/lib64"
 DROPIN="/etc/systemd/system/fprintd.service.d"
 
@@ -26,52 +28,21 @@ if [ ! -f "$SO_SRC/libfprint-2.so.2.0.0" ]; then
   exit 1
 fi
 
-echo "== 1/6 install our libfprint into $DEST =="
+echo "== 1/5 install our libfprint into $DEST =="
 install -d "$DEST"
 install -m0755 "$SO_SRC/libfprint-2.so.2.0.0" "$DEST/"
 ln -sf libfprint-2.so.2.0.0 "$DEST/libfprint-2.so.2"
 ln -sf libfprint-2.so.2     "$DEST/libfprint-2.so"
 restorecon -R "$DEST" 2>/dev/null || true   # correct SELinux labels
 
-echo "== 2/6 systemd drop-in: point ONLY fprintd at it =="
+echo "== 2/5 systemd drop-in: point ONLY fprintd at it =="
 install -d "$DROPIN"
 cat > "$DROPIN/10-goodix55a4.conf" <<EOF
 [Service]
 Environment=LD_LIBRARY_PATH=$DEST
 EOF
 
-echo "== 3/6 provision the sensor key (one-time) =="
-# The driver talks TLS-PSK with an all-zero key, which the sensor only accepts
-# once a fixed, publicly known blob has been written into it (it ships in
-# goodix-fp-dump and is not device-specific). The C driver deliberately only
-# *checks* for it and refuses to activate otherwise — on an untouched sensor
-# that looks like an unexplained failure, so provision it here, once.
-# This writes slot 0xbb010003 only; Windows keeps its key material in slot
-# 0xbb010002, which is left alone. See the dual-boot note in README.
-# Stop it politely: SIGKILL denies fprintd the chance to close the device, and
-# the driver clears the sensor LED on close — a hard kill leaves the light on
-# with nothing left to switch it off.
-systemctl stop fprintd.service 2>/dev/null || true
-pkill -TERM -x fprintd 2>/dev/null || true
-sleep 2
-pkill -9 -x fprintd 2>/dev/null || true   # only if it ignored the polite ask
-sleep 1
-PYBIN="${FP_PYBIN:-$PYDIR/.venv/bin/python}"
-if [ -x "$PYBIN" ]; then
-  install -m0644 "$REPO/scripts/provision_psk.py" "$PYDIR/"
-  # PYTHONDONTWRITEBYTECODE: we are root here, and $PYDIR may be a throwaway
-  # directory owned by the user (that is how install.sh calls us). A root-owned
-  # __pycache__ inside it survives the user's cleanup, so the "leaves nothing
-  # behind" promise quietly breaks. Simplest fix is to write no bytecode at all.
-  ( cd "$PYDIR" && PYTHONDONTWRITEBYTECODE=1 "$PYBIN" provision_psk.py ) || {
-      echo "   WARNING: key provisioning failed — the driver may not activate." >&2
-      echo "   retry: cd $PYDIR && .venv/bin/python provision_psk.py" >&2
-  }
-else
-  echo "   skipped: no $PYBIN (run ./install.sh or ./setup.sh first)"
-fi
-
-echo "== 4/6 SELinux: stop logging the harmless nr_hugepages probe =="
+echo "== 3/5 SELinux: stop logging the harmless nr_hugepages probe =="
 # fprintd now loads our libfprint, which links OpenCV for the SIGFM matcher.
 # OpenCV pulls in Intel TBB, whose scalable allocator reads
 # /proc/sys/vm/nr_hugepages at init and falls back to normal pages when it
@@ -109,14 +80,14 @@ else
   fi
 fi
 
-echo "== 5/6 restart fprintd =="
+echo "== 4/5 restart fprintd =="
 systemctl stop fprintd.service 2>/dev/null || true
 pkill -TERM -x fprintd 2>/dev/null || true
 sleep 1
 systemctl daemon-reload
 systemctl restart fprintd.service 2>/dev/null || true   # dbus-activated; ok if not running
 
-echo "== 6/6 PAM =="
+echo "== 5/5 PAM =="
 if command -v authselect >/dev/null 2>&1; then
   if authselect current 2>/dev/null | grep -q with-fingerprint; then
     echo "   with-fingerprint already enabled"
@@ -160,6 +131,13 @@ else
     echo "   upstream libfprint recommends for templates against other processes."
 fi
 
+echo ""
+echo "NOT done here: the one-time sensor key. It runs as your user, not root:"
+echo "  sudo bash $REPO/scripts/udev-access.sh grant"
+echo "  sudo systemctl stop fprintd"
+echo "  $REPO/scripts/provision.sh        # asks before writing to the sensor"
+echo "  sudo bash $REPO/scripts/udev-access.sh revoke"
+echo "(./install.sh does all of that for you.)"
 echo ""
 echo "DONE. Verify:  fprintd-list \$USER   (should show the Goodix 55X4 device)"
 echo "               fprintd-verify        (place finger)"

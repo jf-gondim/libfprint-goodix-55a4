@@ -41,7 +41,10 @@ if [ ! -d "$WORK/goodix-fp-dump/.git" ]; then
 fi
 cd "$WORK/goodix-fp-dump"
 [ -d .venv ] || python3 -m venv .venv
-.venv/bin/pip install -q pyusb crcmod numpy opencv-python-headless python-periphery
+# Hash-pinned, like install.sh; see requirements/.
+.venv/bin/pip install -q --require-hashes --no-deps -r "$REPO/requirements/build.txt"
+.venv/bin/pip install -q --require-hashes --no-deps --no-build-isolation \
+  -r "$REPO/requirements/research.txt"
 # stub: protocol.py imports spidev unconditionally, for the SPI variants of this
 # sensor family. Ours is USB, so nothing calls into it — but the import has to
 # resolve or driver_55x4 will not load.
@@ -54,5 +57,8 @@ install -m0644 "$REPO/scripts/research/"{probe_psk,py_relay_probe,py_probe_cseq,
 echo "   -> $WORK/goodix-fp-dump  (Python reference tooling)"
 
 echo ""
+echo "Sensor key (once, as your user, asks first):"
+echo "  sudo bash scripts/udev-access.sh grant && sudo systemctl stop fprintd"
+echo "  scripts/provision.sh; sudo bash scripts/udev-access.sh revoke"
 echo "DONE. Native driver test (needs sensor + udev uaccess, no sudo):"
 echo "  G_MESSAGES_DEBUG=all $WORK/twd-libfprint/build/examples/img-capture /tmp/out.pgm"

@@ -9,6 +9,10 @@ echo "== remove systemd drop-in =="
 rm -f "$DROPIN"
 rmdir --ignore-fail-on-non-empty /etc/systemd/system/fprintd.service.d 2>/dev/null || true
 
+echo "== remove udev access rule (if left over) =="
+rm -f /etc/udev/rules.d/70-goodix55a4.rules
+udevadm control --reload 2>/dev/null || true
+
 echo "== remove installed lib =="
 rm -rf /opt/libfprint-goodix
 

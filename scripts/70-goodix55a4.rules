@@ -1,0 +1,7 @@
+# Let the logged-in user talk to the Goodix 27c6:55a4 sensor directly, without
+# root. Used for the one-time key provisioning (scripts/provision.sh). fprintd
+# runs as root and does not need it.
+#
+# While this rule is active, ANY program you run can open the sensor and read
+# raw fingerprint images, so install.sh removes it again once it is done.
+SUBSYSTEM=="usb", ATTR{idVendor}=="27c6", ATTR{idProduct}=="55a4", TAG+="uaccess"
